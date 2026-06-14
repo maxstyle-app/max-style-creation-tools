@@ -1,7 +1,8 @@
 import Stripe from 'stripe'
 import { supabaseAdmin } from '../../lib/supabaseAdmin'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+// .trim() removes any accidental invisible spaces from Railway!
+const stripe = new Stripe((process.env.STRIPE_SECRET_KEY || '').trim())
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -26,11 +27,10 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Invalid login.' })
     }
 
-    // FIXED: Hardcoding your exact live URL so Stripe doesn't get a broken link!
-    const DOMAIN = 'https://max-style-creation-tools-production.up.railway.app';
+    const DOMAIN = 'https://max-style-creation-tools-production.up.railway.app'
     
-    // Safety fallback for your price ID just in case Railway hides the variable
-    const priceId = process.env.STRIPE_PRICE_ID || 'price_1TiDvEFjhcru0Y0zr7ERrwxi';
+    // Completely ignoring Railway for this and using the exact clean string!
+    const EXACT_PRICE_ID = 'price_1TiDvEFjhcru0Y0zr7ERrwxi'
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -39,7 +39,7 @@ export default async function handler(req, res) {
       client_reference_id: user.id,
       line_items: [
         {
-          price: priceId,
+          price: EXACT_PRICE_ID,
           quantity: 1
         }
       ],
@@ -79,4 +79,4 @@ export default async function handler(req, res) {
     console.error(error)
     return res.status(500).json({ error: error.message })
   }
-}
+            }
