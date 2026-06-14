@@ -126,10 +126,17 @@ export default function Home() {
     setLoading(true)
 
     try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+
+      if (!currentSession?.access_token) {
+        throw new Error('You are not logged in.')
+      }
+
       const response = await fetch('/api/create-checkout-session', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentSession.access_token}`
         }
       })
 
@@ -141,11 +148,6 @@ export default function Home() {
 
       if (data.url) {
         window.location.href = data.url
-        return
-      }
-
-      if (data.sessionUrl) {
-        window.location.href = data.sessionUrl
         return
       }
 
