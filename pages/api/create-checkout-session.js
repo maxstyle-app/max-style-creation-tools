@@ -26,6 +26,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Invalid login.' })
     }
 
+    // Fixed: Uses your actual Price ID and fixes the URL bug
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -33,21 +34,12 @@ export default async function handler(req, res) {
       client_reference_id: user.id,
       line_items: [
         {
-          price_data: {
-            currency: 'usd',
-            unit_amount: 500,
-            recurring: {
-              interval: 'month'
-            },
-            product_data: {
-              name: 'Max Style Creation Tools Unlimited'
-            }
-          },
+          price: process.env.STRIPE_PRICE_ID,
           quantity: 1
         }
       ],
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}`,
+      success_url: `${req.headers.origin}/?success=true`,
+      cancel_url: `${req.headers.origin}/?canceled=true`,
       metadata: {
         user_id: user.id
       }
@@ -62,9 +54,7 @@ export default async function handler(req, res) {
     if (existingProfile) {
       await supabaseAdmin
         .from('user_profiles')
-        .update({
-          stripe_checkout_session: session.id
-        })
+        .update({ stripe_checkout_session: session.id })
         .eq('user_id', user.id)
     } else {
       await supabaseAdmin
@@ -79,7 +69,8 @@ export default async function handler(req, res) {
         })
     }
 
-    return res.status(200).json({ sessionId: session.id })
+    // Fixed: Now returns the actual URL so your site can redirect!
+    return res.status(200).json({ url: session.url })
   } catch (error) {
     console.error(error)
     return res.status(500).json({ error: error.message })
