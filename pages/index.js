@@ -1,342 +1,371 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import axios from 'axios'
-import { loadStripe } from '@stripe/stripe-js'
 
 export default function Home() {
-  const [user, setUser] = useState(null)
-  const [mode, setMode] = useState('login')
+  const [session, setSession] = useState(null)
+  const [loadingAuth, setLoadingAuth] = useState(true)
+  const [authMode, setAuthMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
   const [tool, setTool] = useState('linkedin')
   const [profileText, setProfileText] = useState('')
   const [topic, setTopic] = useState('')
-  const [niche, setNiche] = useState('business')
-  const [platform, setPlatform] = useState('instagram')
-  const [result, setResult] = useState('')
+  const [niche, setNiche] = useState('')
+  const [platform, setPlatform] = useState('LinkedIn')
+
   const [loading, setLoading] = useState(false)
-  const [usage, setUsage] = useState(null)
+  const [result, setResult] = useState('')
+  const [error, setError] = useState('')
+  const [usage, setUsage] = useState({
+    used: 0,
+    limit: 7,
+    isPaid: false
+  })
 
   useEffect(() => {
-    checkSession()
+    let mounted = true
 
-    const { data } = supabase.auth.onAuthStateChange(() => {
-      checkSession()
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return
+      setSession(data.session ?? null)
+      setLoadingAuth(false)
+    })
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession)
     })
 
     return () => {
-      data.subscription.unsubscribe()
+      mounted = false
+      subscription.unsubscribe()
     }
   }, [])
 
-  async function checkSession() {
-    const { data } = await supabase.auth.getSession()
+  const remaining = useMemo(() => {
+    if (usage.isPaid) return 'Unlimited'
+    return `${Math.max(usage.limit - usage.used, 0)} left`
+  }, [usage])
 
-    if (data.session?.user) {
-      setUser(data.session.user)
-    } else {
-      setUser(null)
-    }
-  }
-
-  async function handleAuth(e) {
+  async function handleAuthSubmit(e) {
     e.preventDefault()
-
-    if (!email || !password) {
-      alert('Enter your email and password.')
-      return
-    }
-
-    if (password.length < 6) {
-      alert('Password must be at least 6 characters.')
-      return
-    }
-
-    if (mode === 'signup') {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password
-      })
-
-      if (error) {
-        alert(error.message)
-        return
-      }
-
-      alert('Account created. Check your email to verify your account, then log in.')
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      })
-
-      if (error) {
-        alert(error.message)
-        return
-      }
-    }
-  }
-
-  async function logout() {
-    await supabase.auth.signOut()
-    setUser(null)
-    setResult('')
-    setUsage(null)
-  }
-
-  async function generate() {
-    setResult('')
-
-    if (tool === 'linkedin' && !profileText.trim()) {
-      alert('Paste your LinkedIn profile text first.')
-      return
-    }
-
-    if (tool === 'content' && !topic.trim()) {
-      alert('Enter a content topic first.')
-      return
-    }
-
+    setError('')
     setLoading(true)
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession()
-      const token = sessionData.session?.access_token
+      if (authMode === 'login') {
+        const { error: loginError } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        })
 
-      if (!token) {
-        alert('Please log in again.')
-        setLoading(false)
-        return
+        if (loginError) throw loginError
+      } else {
+        const { error: signupError } = await supabase.auth.signUp({
+          email,
+          password
+        })
+
+        if (signupError) throw signupError
       }
-
-      const response = await axios.post(
-        '/api/generate',
-        {
-          tool,
-          profileText,
-          topic,
-          niche,
-          platform
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      )
-
-      setResult(response.data.result)
-      setUsage(response.data.usage)
-    } catch (error) {
-      alert(error.response?.data?.error || 'Something went wrong.')
+    } catch (err) {
+      setError(err.message || 'Authentication failed.')
     } finally {
       setLoading(false)
     }
   }
 
-  async function upgrade() {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession()
-      const token = sessionData.session?.access_token
+  async function handleGenerate(e) {
+    e.preventDefault()
+    setError('')
+    setResult('')
+    setLoading(true)
 
-      if (!token) {
-        alert('Please log in again.')
-        return
+    try {
+      const {
+        data: { session: currentSession }
+      } = await supabase.auth.getSession()
+
+      if (!currentSession?.access_token) {
+        throw new Error('You are not logged in.')
       }
 
-      const response = await axios.post(
-        '/api/create-checkout-session',
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      )
+      const body =
+        tool === 'linkedin'
+          ? { tool, profileText }
+          : { tool, topic, niche, platform }
 
-      const stripe = await loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
-      await stripe.redirectToCheckout({ sessionId: response.data.sessionId })
-    } catch (error) {
-      alert(error.response?.data?.error || 'Checkout error.')
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentSession.access_token}`
+        },
+        body: JSON.stringify(body)
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Generation failed.')
+      }
+
+      setResult(data.result || '')
+      if (data.usage) setUsage(data.usage)
+    } catch (err) {
+      setError(err.message || 'Generation failed.')
+    } finally {
+      setLoading(false)
     }
   }
 
-  if (!user) {
-    return (
-      <main className="page">
-        <section className="card auth-card">
-          <h1>Max Style Creation Tools</h1>
+  async function handleUpgrade() {
+    setError('')
+    setLoading(true)
 
+    try {
+      const response = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Could not start checkout.')
+      }
+
+      if (data.url) {
+        window.location.href = data.url
+        return
+      }
+
+      if (data.sessionUrl) {
+        window.location.href = data.sessionUrl
+        return
+      }
+
+      throw new Error('Checkout link missing.')
+    } catch (err) {
+      setError(err.message || 'Upgrade failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+  }
+
+  if (loadingAuth) {
+    return (
+      <div className="page">
+        <div className="card">
+          <h1>Max Style Creation Tools</h1>
+          <p className="subtitle">Loading your workspace...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return (
+      <div className="page">
+        <div className="card auth-card">
+          <h1>Max Style Creation Tools</h1>
           <p className="subtitle">
-            AI-powered LinkedIn profile optimization and content creation tools.
+            Create better content faster with AI-powered LinkedIn and content
+            generation.
           </p>
 
-          <form onSubmit={handleAuth} className="form">
-            <input
-              type="email"
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+          <form className="form" onSubmit={handleAuthSubmit}>
+            <div className="tabs">
+              <button
+                type="button"
+                className={authMode === 'login' ? 'active' : ''}
+                onClick={() => setAuthMode('login')}
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                className={authMode === 'signup' ? 'active' : ''}
+                onClick={() => setAuthMode('signup')}
+              >
+                Sign Up
+              </button>
+            </div>
 
-            <input
-              type="password"
-              placeholder="Password, at least 6 characters"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <div className="tool-box">
+              <label htmlFor="email">Email</label>
+              <input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
 
-            <button type="submit">
-              {mode === 'signup' ? 'Create Account' : 'Log In'}
-            </button>
+              <label htmlFor="password">Password</label>
+              <input
+                id="password"
+                type="password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+
+              <button type="submit" disabled={loading}>
+                {loading
+                  ? 'Please wait...'
+                  : authMode === 'login'
+                    ? 'Log In'
+                    : 'Create Account'}
+              </button>
+            </div>
           </form>
 
-          <button
-            className="link-button"
-            onClick={() => setMode(mode === 'signup' ? 'login' : 'signup')}
-          >
-            {mode === 'signup'
-              ? 'Already have an account? Log in'
-              : 'Need an account? Sign up'}
-          </button>
-
+          {error ? <p className="small" style={{ color: '#dc2626' }}>{error}</p> : null}
           <p className="small">
-            Free trial: 7 generations per month. Upgrade for $5/month.
+            By continuing, you agree to use the app responsibly.
           </p>
-        </section>
-      </main>
+        </div>
+      </div>
     )
   }
 
   return (
-    <main className="page">
-      <section className="card">
+    <div className="page">
+      <div className="card">
         <div className="topbar">
           <div>
             <h1>Max Style Creation Tools</h1>
-            <p className="subtitle">Logged in as {user.email}</p>
+            <p className="subtitle">
+              Build polished LinkedIn profiles and content in seconds.
+            </p>
           </div>
 
-          <button className="secondary" onClick={logout}>
-            Log Out
-          </button>
-        </div>
-
-        <div className="usage-box">
-          <p>
-            Free trial: <strong>7 generations per month</strong>
-          </p>
-
-          {usage && (
+          <div className="usage-box">
+            <strong>{usage.isPaid ? 'Pro Access' : 'Free Trial'}</strong>
             <p>
-              Used this month: <strong>{usage.used}</strong> / {usage.limit}
+              Used this month: {usage.used}
+              {!usage.isPaid ? ` / ${usage.limit}` : ''}
             </p>
-          )}
+            <p>Remaining: {remaining}</p>
+            <button className="secondary" type="button" onClick={handleSignOut}>
+              Sign Out
+            </button>
+          </div>
         </div>
 
         <div className="tabs">
           <button
+            type="button"
             className={tool === 'linkedin' ? 'active' : ''}
-            onClick={() => {
-              setTool('linkedin')
-              setResult('')
-            }}
+            onClick={() => setTool('linkedin')}
           >
-            LinkedIn Optimizer
+            LinkedIn Profile
           </button>
-
           <button
+            type="button"
             className={tool === 'content' ? 'active' : ''}
-            onClick={() => {
-              setTool('content')
-              setResult('')
-            }}
+            onClick={() => setTool('content')}
           >
             Content Generator
           </button>
         </div>
 
-        {tool === 'linkedin' && (
-          <div className="tool-box">
-            <h2>LinkedIn Profile Optimizer</h2>
+        <form className="form" onSubmit={handleGenerate}>
+          {tool === 'linkedin' ? (
+            <div className="tool-box">
+              <h2>Improve your LinkedIn profile</h2>
+              <p>Paste your current profile text and get a cleaner, stronger version.</p>
 
-            <p>
-              Paste your LinkedIn headline, About section, experience summary, or full profile text.
-            </p>
+              <label htmlFor="profileText">Profile text</label>
+              <textarea
+                id="profileText"
+                placeholder="Paste your LinkedIn headline, About section, experience, and anything else you want improved..."
+                value={profileText}
+                onChange={(e) => setProfileText(e.target.value)}
+                required
+              />
+            </div>
+          ) : (
+            <div className="tool-box">
+              <h2>Create high-quality content</h2>
+              <p>Generate content tailored to your niche and platform.</p>
 
-            <textarea
-              placeholder="Paste your LinkedIn profile text here..."
-              value={profileText}
-              onChange={(e) => setProfileText(e.target.value)}
-              rows={8}
-            />
+              <label htmlFor="niche">Business / Niche</label>
+              <input
+                id="niche"
+                type="text"
+                placeholder="Example: personal branding, fitness coaching, SaaS"
+                value={niche}
+                onChange={(e) => setNiche(e.target.value)}
+                required
+              />
 
-            <button onClick={generate} disabled={loading}>
-              {loading ? 'Optimizing...' : 'Optimize My Profile'}
-            </button>
-          </div>
-        )}
+              <label htmlFor="platform">Platform</label>
+              <select
+                id="platform"
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+                required
+              >
+                <option>LinkedIn</option>
+                <option>Instagram</option>
+                <option>TikTok</option>
+                <option>Facebook</option>
+                <option>Email</option>
+                <option>Blog</option>
+              </select>
 
-        {tool === 'content' && (
-          <div className="tool-box">
-            <h2>Content Generator</h2>
+              <label htmlFor="topic">Topic</label>
+              <input
+                id="topic"
+                type="text"
+                placeholder="Example: how to get more leads on LinkedIn"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                required
+              />
+            </div>
+          )}
 
-            <p>
-              Create ready-to-post content for Instagram, TikTok, LinkedIn, email, and blogs.
-            </p>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Generating...' : 'Generate'}
+          </button>
+        </form>
 
-            <label>Your niche</label>
-            <input
-              value={niche}
-              onChange={(e) => setNiche(e.target.value)}
-              placeholder="Example: fitness, beauty, trucking, real estate"
-            />
+        {error ? (
+          <p className="small" style={{ color: '#dc2626' }}>
+            {error}
+          </p>
+        ) : null}
 
-            <label>Platform</label>
-            <select value={platform} onChange={(e) => setPlatform(e.target.value)}>
-              <option value="instagram">Instagram</option>
-              <option value="tiktok">TikTok</option>
-              <option value="linkedin">LinkedIn</option>
-              <option value="email">Email</option>
-              <option value="blog">Blog</option>
-            </select>
-
-            <label>Topic</label>
-            <textarea
-              placeholder="Example: how to stay consistent with workouts"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              rows={5}
-            />
-
-            <button onClick={generate} disabled={loading}>
-              {loading ? 'Generating...' : 'Generate Content'}
-            </button>
-          </div>
-        )}
-
-        {result && (
+        {result ? (
           <div className="result">
             <h2>Your Result</h2>
-
             <pre>{result}</pre>
+          </div>
+        ) : null}
 
-            <button
-              className="secondary"
-              onClick={() => navigator.clipboard.writeText(result)}
-            >
-              Copy Result
+        {!usage.isPaid ? (
+          <div className="upgrade">
+            <h2>Want unlimited access?</h2>
+            <p>Upgrade when you are ready to keep generating without limits.</p>
+            <button type="button" onClick={handleUpgrade} disabled={loading}>
+              Upgrade Now
             </button>
           </div>
-        )}
-
-        <div className="upgrade">
-          <h2>Need unlimited generations?</h2>
-          <p>Upgrade to unlimited access for $5/month.</p>
-          <button onClick={upgrade}>Upgrade Now</button>
-        </div>
-      </section>
-    </main>
+        ) : null}
+      </div>
+    </div>
   )
-  }
+}
