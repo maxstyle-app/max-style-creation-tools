@@ -81,10 +81,15 @@ export default async function handler(req, res) {
       })
     }
 
+    const trimmedProfileText = (profileText || '').slice(0, 4000)
+    const trimmedTopic = (topic || '').slice(0, 250)
+    const trimmedNiche = (niche || '').slice(0, 120)
+    const trimmedPlatform = (platform || '').slice(0, 50)
+
     let prompt = ''
 
     if (tool === 'linkedin') {
-      if (!profileText) {
+      if (!trimmedProfileText) {
         return res.status(400).json({ error: 'Profile text is required.' })
       }
 
@@ -104,10 +109,10 @@ Return the answer in this format:
 Make it polished, credible, and easy to copy.
 
 Profile text:
-${profileText}
+${trimmedProfileText}
 `
     } else if (tool === 'content') {
-      if (!topic || !platform || !niche) {
+      if (!trimmedTopic || !trimmedPlatform || !trimmedNiche) {
         return res.status(400).json({ error: 'Topic, platform, and niche are required.' })
       }
 
@@ -116,9 +121,9 @@ You are an expert content strategist.
 
 Create content for:
 
-Business/Niche: ${niche}
-Platform: ${platform}
-Topic: ${topic}
+Business/Niche: ${trimmedNiche}
+Platform: ${trimmedPlatform}
+Topic: ${trimmedTopic}
 
 Return 3 strong content options.
 
@@ -140,11 +145,17 @@ Format clearly with labels.
       return res.status(400).json({ error: 'Invalid tool selected.' })
     }
 
+    const model = profile.is_paid
+      ? 'claude-3-5-sonnet-20241022'
+      : 'claude-3-haiku-20240307'
+
+    const maxTokens = profile.is_paid ? 1500 : 900
+
     const aiResponse = await axios.post(
       'https://api.anthropic.com/v1/messages',
       {
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1500,
+        model,
+        max_tokens: maxTokens,
         messages: [
           {
             role: 'user',
