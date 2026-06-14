@@ -26,7 +26,12 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Invalid login.' })
     }
 
-    // Fixed: Uses your actual Price ID and fixes the URL bug
+    // FIXED: Hardcoding your exact live URL so Stripe doesn't get a broken link!
+    const DOMAIN = 'https://max-style-creation-tools-production.up.railway.app';
+    
+    // Safety fallback for your price ID just in case Railway hides the variable
+    const priceId = process.env.STRIPE_PRICE_ID || 'price_1TiDvEFjhcru0Y0zr7ERrwxi';
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -34,12 +39,12 @@ export default async function handler(req, res) {
       client_reference_id: user.id,
       line_items: [
         {
-          price: process.env.STRIPE_PRICE_ID,
+          price: priceId,
           quantity: 1
         }
       ],
-      success_url: `${req.headers.origin}/?success=true`,
-      cancel_url: `${req.headers.origin}/?canceled=true`,
+      success_url: `${DOMAIN}/?success=true`,
+      cancel_url: `${DOMAIN}/?canceled=true`,
       metadata: {
         user_id: user.id
       }
@@ -69,7 +74,6 @@ export default async function handler(req, res) {
         })
     }
 
-    // Fixed: Now returns the actual URL so your site can redirect!
     return res.status(200).json({ url: session.url })
   } catch (error) {
     console.error(error)
