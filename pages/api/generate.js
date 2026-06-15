@@ -1,3 +1,4 @@
+//Forced rebuild to load Claude API key
 import { supabaseAdmin } from '../../lib/supabaseAdmin'
 import axios from 'axios'
 
